@@ -3,7 +3,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 FAIL=0
-for t in test-git-wrapper.sh test-sbx-git.sh test-sync-vorgaben.sh; do
+for t in test-sbx-wrapper.sh test-git-wrapper.sh test-sbx-git.sh test-sync-vorgaben.sh; do
     echo "== $t"
     bash "$t" || FAIL=1
 done
