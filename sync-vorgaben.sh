@@ -17,7 +17,7 @@
 # which belongs into each project's own CLAUDE.md.
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")")" && pwd -P)"
 SRC="${1:-${SBX_LEITFADEN_DIR:-$HOME/ki-leitfaden}}"
 OUT="${SBX_VORGABEN_OUT:-$SANDBOX_DIR/.devcontainer/vorgaben}"
 CC="$SRC/konfiguration/claude-code"

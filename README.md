@@ -7,13 +7,28 @@ project directory with a default-deny egress firewall.
 
     ./install.sh --build
 
-Installs docker.io (apt, admin password via pkexec), enables the service,
-adds you to the `docker` group, installs `@devcontainers/cli` (npm, prefix
-switched to `~/.local` if the global one is not writable), links the
-`sbx-*` shims into `~/.local/bin`, adds a GTK CSS rule so Ptyxis shows a
-green header bar for sandbox windows, and builds the image. Re-run any
-time; each step is skipped when already done. After a fresh docker group
-add: `newgrp docker` or re-login. Flags: `--no-docker`, `--no-gtk`.
+Linux (Debian/Ubuntu): installs docker.io (apt, admin password via pkexec),
+enables the service, adds you to the `docker` group, installs
+`@devcontainers/cli` (npm, prefix switched to `~/.local` if the global one is
+not writable), syncs the Claude Code requirements from the ki-leitfaden
+checkout, links the `sbx-*` shims into `~/.local/bin`, adds a GTK CSS rule so
+Ptyxis shows a green header bar for sandbox windows, and builds the image.
+Re-run any time; each step is skipped when already done. After a fresh
+docker group add: `newgrp docker` or re-login. Flags: `--no-docker`,
+`--no-gtk`, `--leitfaden PATH`.
+
+macOS: install Docker Desktop, OrbStack or Colima and start it, plus
+`brew install node python`; then run the same command. The installer only
+checks that `docker info` answers, there is no docker group and no service to
+enable. Put `~/.local/bin` on your PATH. Everything else (wrapper, git
+approval, web UI, profiles) works the same; the scripts avoid GNU-only
+options (`realpath -e`, `sha256sum`, `sed -i`) and bash 4 features, so they
+run with the system bash 3.2. Docker Desktop shares `/Users` by default;
+projects and the `~/.config/sbx`, `~/.local/state/sbx` dirs live there. The
+seccomp profile is passed inline by the docker CLI and applies inside the
+Docker Desktop VM. Not yet verified on a Mac: bubblewrap (Claude's own
+sandbox) inside the VM's kernel; run the checks under "Claude's own sandbox"
+after the first build.
 
 Layout:
 

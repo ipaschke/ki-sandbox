@@ -1,8 +1,9 @@
 #!/bin/bash
 # Installer for the agent sandbox (docker + devcontainer CLI + sbx wrappers).
-# Idempotent: re-run after pulling changes. Steps:
-#   1. docker.io via apt (asks for the admin password via pkexec, or sudo)
-#   2. docker service enabled, current user added to the docker group
+# Linux (Debian/Ubuntu) and macOS. Idempotent: re-run after pulling changes. Steps:
+#   1. Linux: docker.io via apt (admin password via pkexec, or sudo)
+#      macOS: no install; Docker Desktop, OrbStack or Colima must already run
+#   2. Linux: docker service enabled, current user added to the docker group
 #   3. @devcontainers/cli via npm, using a user-writable prefix
 #   4. sbx-* shims in ~/.local/bin
 #   5. Claude Code requirements from the ki-leitfaden checkout into
@@ -13,8 +14,9 @@
 # Usage: ./install.sh [--build] [--no-docker] [--no-gtk] [--leitfaden PATH]
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")")" && pwd -P)"
 BIN_DIR="$HOME/.local/bin"
+OS="$(uname -s)"
 do_build=0 do_docker=1 do_gtk=1
 leitfaden="${SBX_LEITFADEN_DIR:-$HOME/ki-leitfaden}"
 while [ $# -gt 0 ]; do
@@ -42,7 +44,23 @@ as_root() {
 }
 
 # ---- 1+2. docker --------------------------------------------------------
-if [ "$do_docker" = 1 ]; then
+if [ "$do_docker" = 1 ] && [ "$OS" = Darwin ]; then
+    # macOS: docker comes from Docker Desktop, OrbStack or Colima; nothing to
+    # install here, no docker group, no systemd. Only check that it answers.
+    if ! command -v docker >/dev/null; then
+        echo "docker not found. Install Docker Desktop, OrbStack or Colima, start it, then re-run." >&2
+        exit 1
+    fi
+    if docker info >/dev/null 2>&1; then
+        say "docker present: $(docker --version)"
+    else
+        warn "docker is installed but the daemon does not answer; start Docker Desktop / OrbStack / Colima"
+    fi
+    if ! command -v python3 >/dev/null; then
+        echo "python3 not found (needed by sbx and sbx-git); install it with Homebrew: brew install python" >&2
+        exit 1
+    fi
+elif [ "$do_docker" = 1 ]; then
     if ! command -v docker >/dev/null; then
         say "installing docker.io"
         as_root bash -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -q && apt-get install -y docker.io'
@@ -62,7 +80,11 @@ fi
 
 # ---- 3. devcontainer CLI ------------------------------------------------
 if ! command -v npm >/dev/null; then
-    echo "npm not found; install nodejs first (apt install nodejs npm)" >&2
+    if [ "$OS" = Darwin ]; then
+        echo "npm not found; install Node first: brew install node" >&2
+    else
+        echo "npm not found; install nodejs first (apt install nodejs npm)" >&2
+    fi
     exit 1
 fi
 prefix="$(npm config get prefix)"
@@ -89,7 +111,7 @@ for t in claude codex shell seed stop rebuild ps git; do
 done
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) warn "$BIN_DIR is not on PATH" ;;
+    *) warn "$BIN_DIR is not on PATH; add to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
 
 # ---- 5. Claude Code requirements (KI-Leitfaden) --------------------------

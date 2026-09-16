@@ -9,6 +9,14 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"; rm -rf "$HERE/../.devcontainer/gen/"*/' EXI
 FAIL=0
 ok()   { echo "ok: $1"; }
 fail() { echo "FAIL: $1"; FAIL=1; }
+replace_in_file() { # replace_in_file <file> <old> <new>   (portable: no sed -i)
+    python3 - "$@" <<'PY'
+import sys
+f, old, new = sys.argv[1:4]
+s = open(f).read()
+open(f, "w").write(s.replace(old, new))
+PY
+}
 
 mkdir -p "$T/bin" "$T/home" "$T/proj" "$T/proj2"
 cat > "$T/bin/docker" <<'EOF'
@@ -74,7 +82,28 @@ assert "source=sandbox-bash-history-local," in m, m
 assert "source=sandbox-claude-config," not in m
 PY
 python3 - "$state/etc-sbx/codex/config.toml" <<'PY' && ok "codex config.toml for local provider" || fail "codex config"
-import sys, tomllib
+import sys
+try:
+    import tomllib
+except ImportError:          # Python < 3.11 (e.g. macOS system python): minimal parser for this flat file
+    import re
+    class tomllib:
+        @staticmethod
+        def load(fh):
+            d, cur = {}, None
+            for line in fh.read().decode().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line: continue
+                m = re.match(r"^\[([\w.]+)\]$", line)
+                if m:
+                    cur = d
+                    for part in m.group(1).split("."): cur = cur.setdefault(part, {})
+                    continue
+                k, v = [x.strip() for x in line.split("=", 1)]
+                k = k.strip('"')
+                v = {"true": True, "false": False}.get(v, v.strip('"') if v.startswith('"') else (int(v) if v.isdigit() else v))
+                (cur if cur is not None else d)[k] = v
+            return d
 d = tomllib.load(open(sys.argv[1], "rb"))
 assert d["model_provider"] == "local" and d["model"] == "qwen3-coder:32b"
 p = d["model_providers"]["local"]
@@ -93,14 +122,14 @@ mkdir -p "$cfg"; echo local > "$cfg/profile"
 [ "$(id_labels)" = "$labels_local" ] && ok "same container as --local" || fail "labels differ for project-local"
 
 # 5. endpoint change recreates: different labels
-sed -i 's/qwen3-coder:32b/other-model/' "$XDG_CONFIG_HOME/sbx/local-model.env"
+replace_in_file "$XDG_CONFIG_HOME/sbx/local-model.env" 'qwen3-coder:32b' 'other-model'
 "$SBX" shell "$T/proj" >/dev/null 2>&1
 [ "$(id_labels)" != "$labels_local" ] && ok "changed model gives new container" || fail "model change not in hash"
 
 # 6. invalid profile value refused; invalid base url refused
 echo weird > "$cfg/profile"; "$SBX" shell "$T/proj" >/dev/null 2>"$T/err"; rc=$?
 [ "$rc" != 0 ] && grep -qi 'profile' "$T/err" && ok "unknown profile refused" || fail "unknown profile: rc=$rc"
-echo local > "$cfg/profile"; sed -i 's#^SBX_LOCAL_BASE_URL=.*#SBX_LOCAL_BASE_URL=inferenz.example.intern#' "$XDG_CONFIG_HOME/sbx/local-model.env"
+echo local > "$cfg/profile"; replace_in_file "$XDG_CONFIG_HOME/sbx/local-model.env" 'SBX_LOCAL_BASE_URL=https://inferenz.example.intern:8443' 'SBX_LOCAL_BASE_URL=inferenz.example.intern'
 "$SBX" shell "$T/proj" >/dev/null 2>"$T/err"; rc=$?
 [ "$rc" != 0 ] && grep -qi 'BASE_URL' "$T/err" && ok "base url without scheme refused" || fail "bad base url: rc=$rc $(cat "$T/err")"
 

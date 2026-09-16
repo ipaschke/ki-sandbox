@@ -5,7 +5,18 @@
 # --local: profile "local" for this call (internal model server only, README).
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# Portable helpers (Linux and macOS: no GNU-only options, bash 3.2 compatible).
+abspath() { # absolute, symlink-resolved path of an existing dir or file; fails otherwise
+    if [ -d "$1" ]; then (cd "$1" 2>/dev/null && pwd -P)
+    elif [ -e "$1" ]; then (cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$(basename "$1")")
+    else return 1
+    fi
+}
+hash16() { # first 16 hex chars of sha256 of stdin
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-16
+}
+
+SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")")" && pwd -P)"
 tool="${1:?usage: sbx <claude|codex|shell|seed|rebuild|stop|ps|git> [--local] [project-dir] [args...]}"
 force_seed=0
 shift
@@ -13,9 +24,9 @@ profile_flag=""
 if [ "${1:-}" = "--local" ]; then profile_flag=local; shift; fi
 
 if [ $# -gt 0 ] && [ -d "$1" ]; then
-    project="$(realpath "$1")"; shift
+    project="$(abspath "$1")"; shift
 else
-    project="$(realpath "$PWD")"
+    project="$(abspath "$PWD")"
 fi
 export SANDBOX_PROJECT="$project"
 
@@ -70,7 +81,7 @@ add_mount() {
     [[ "$entry" == *:ro ]] && { ro=",readonly"; entry="${entry%:ro}"; }
     entry="${entry/#\~/$HOME}"
     [ -z "$entry" ] && return
-    if ! src="$(realpath -e "$entry" 2>/dev/null)"; then
+    if ! src="$(abspath "$entry")"; then
         echo "sbx: mount path not found: $entry" >&2; exit 1
     fi
     extra_mounts+=("source=$src,target=$src,type=bind$ro")
@@ -223,7 +234,7 @@ extra_mounts+=("source=$req_dir,target=/run/sbx/requests,type=bind")
 mount_spec+="/run/sbx/requests;"
 # Config layout version; bump to force recreation of existing containers.
 # Profile and endpoint are part of the hash: a change recreates the container.
-mounts_hash="$(printf 'v5;%s;%s;%s' "$mount_spec" "$profile" "$local_spec" | sha256sum | cut -c1-16)"
+mounts_hash="$(printf 'v5;%s;%s;%s' "$mount_spec" "$profile" "$local_spec" | hash16)"
 mounts_label="sbx.mounts=$mounts_hash"
 
 # The devcontainer CLI's --mount flag cannot express readonly, but the
