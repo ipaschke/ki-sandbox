@@ -207,6 +207,48 @@ Not recommended, but for a one-off: remove `postStartCommand` from
 container then has whatever network docker's default bridge gives it.
 Put it back afterwards; `git diff` will remind you.
 
+## Claude Code requirements from the KI-Leitfaden
+
+The image carries the Claude Code configuration of the KI-Leitfaden
+(`konfiguration/claude-code/` in the ki-leitfaden repository) as managed
+policy under `/etc/claude-code/`, where the container user cannot change it:
+
+| In the image                                  | Source                          | Effect |
+|-----------------------------------------------|---------------------------------|--------|
+| `/etc/claude-code/managed-settings.json`      | `settings.json`                 | deny/ask/allow rules, Claude's own sandbox (bubblewrap inside the container), secret hook, MCP lockdown, no bypass or auto mode, no Remote Control at startup |
+| `/etc/claude-code/hooks/pre-tool-secrets.sh`  | `hooks/pre-tool-secrets.sh`     | blocks credentials in commands and files (verbatim copy) |
+| `/etc/claude-code/CLAUDE.md`                  | `CLAUDE.md.vorlage`             | behaviour rules, loaded in every project before user and project CLAUDE.md |
+| `/etc/claude-code/VERSION`                    | git commit of the source        | which leitfaden state is baked in |
+
+`sync-vorgaben.sh [path]` (default `~/ki-leitfaden`, run by `install.sh`)
+writes the transformed copies to `.devcontainer/vorgaben/`; commit them, then
+`sbx-rebuild`. The transformation drops entries with placeholders (project
+test/lint commands, internal hosts, the MCP server name; `allowedMcpServers`
+becomes `[]`, blocking every server), points the hook at its absolute path
+and removes the `Projektspezifisches` section from CLAUDE.md, which belongs
+into each project's own CLAUDE.md.
+
+### Claude's own sandbox inside the container
+
+The managed settings keep `sandbox.enabled` and `failIfUnavailable` from the
+leitfaden, so Claude Code runs every Bash command under bubblewrap inside the
+container (layer 2 of the leitfaden's sandbox model). Docker's default seccomp
+profile blocks the syscalls bubblewrap needs to create user and mount
+namespaces, so the container runs with `.devcontainer/seccomp.json`: Docker's
+default profile (moby/profiles, fetched 2026-09-16) with `clone`, `clone3`,
+`unshare`, `mount`, `umount2`, `pivot_root`, `setns`, `mount_setattr`,
+`open_tree` and `move_mount` allowed unconditionally. Every other rule of the
+default profile stays. With this profile bubblewrap mounts a fresh `/proc`, so
+`enableWeakerNestedSandbox` is not set. `seccomp=unconfined` would also work
+but drops the whole filter; not using Claude's sandbox at all is what the
+Anthropic reference devcontainer does. Both were rejected in favour of the
+narrow profile.
+
+Managed lists merge with user and project settings: a project can add allow
+rules for its test and lint commands in `.claude/settings.json`, but cannot
+remove a managed deny or ask rule. The personal settings seeded from the host
+sit below the managed ones.
+
 ## Git: remote operations run on the host
 
 The container holds no git credentials, no `gh` and no SSH keys, so the

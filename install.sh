@@ -5,23 +5,28 @@
 #   2. docker service enabled, current user added to the docker group
 #   3. @devcontainers/cli via npm, using a user-writable prefix
 #   4. sbx-* shims in ~/.local/bin
-#   5. Ptyxis: green header bar for sandbox windows (GTK user CSS)
-#   6. optional image build (--build)
+#   5. Claude Code requirements from the ki-leitfaden checkout into
+#      .devcontainer/vorgaben/ (sync-vorgaben.sh; --leitfaden PATH, default ~/ki-leitfaden)
+#   6. Ptyxis: green header bar for sandbox windows (GTK user CSS)
+#   7. optional image build (--build)
 #
-# Usage: ./install.sh [--build] [--no-docker] [--no-gtk]
+# Usage: ./install.sh [--build] [--no-docker] [--no-gtk] [--leitfaden PATH]
 set -euo pipefail
 
 SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 do_build=0 do_docker=1 do_gtk=1
-for a in "$@"; do
-    case "$a" in
+leitfaden="${SBX_LEITFADEN_DIR:-$HOME/ki-leitfaden}"
+while [ $# -gt 0 ]; do
+    case "$1" in
         --build) do_build=1 ;;
         --no-docker) do_docker=0 ;;
         --no-gtk) do_gtk=0 ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
-        *) echo "unknown option: $a" >&2; exit 2 ;;
+        --leitfaden) shift; leitfaden="${1:?--leitfaden needs a path}" ;;
+        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
+    shift
 done
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -87,7 +92,20 @@ case ":$PATH:" in
     *) warn "$BIN_DIR is not on PATH" ;;
 esac
 
-# ---- 5. Ptyxis header colour -------------------------------------------
+# ---- 5. Claude Code requirements (KI-Leitfaden) --------------------------
+# Managed settings, hook and CLAUDE.md for the image come from the leitfaden
+# checkout. Without it the committed copy in .devcontainer/vorgaben/ is used.
+if [ -d "$leitfaden/konfiguration/claude-code" ]; then
+    say "syncing Claude Code requirements from $leitfaden"
+    "$SANDBOX_DIR/sync-vorgaben.sh" "$leitfaden"
+elif [ -f "$SANDBOX_DIR/.devcontainer/vorgaben/managed-settings.json" ]; then
+    warn "no ki-leitfaden checkout at $leitfaden; using committed vorgaben ($(grep '^commit' "$SANDBOX_DIR/.devcontainer/vorgaben/VERSION"))"
+else
+    echo "no ki-leitfaden checkout at $leitfaden and no committed .devcontainer/vorgaben/; pass --leitfaden PATH" >&2
+    exit 1
+fi
+
+# ---- 6. Ptyxis header colour -------------------------------------------
 # Ptyxis adds a .container CSS class to its window when the foreground
 # process is docker/podman (like .remote for ssh) but ships no colour for it.
 if [ "$do_gtk" = 1 ] && command -v ptyxis >/dev/null; then
@@ -107,7 +125,7 @@ CSS
     fi
 fi
 
-# ---- 6. image -----------------------------------------------------------
+# ---- 7. image -----------------------------------------------------------
 if [ "$do_build" = 1 ]; then
     if docker info >/dev/null 2>&1; then
         say "building sandbox image"
