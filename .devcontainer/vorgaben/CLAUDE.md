@@ -1,4 +1,4 @@
-<!-- Verwaltete Verhaltensregeln der Agent-Sandbox. Quelle: ki-leitfaden@48a4645,
+<!-- Verwaltete Verhaltensregeln der Agent-Sandbox. Quelle: ki-leitfaden@96b32fa,
      konfiguration/claude-code/CLAUDE.md.vorlage, übernommen am 2026-09-16 durch sync-vorgaben.sh.
      Nicht von Hand bearbeiten; Änderungen in konfiguration/gemeinsam/verhaltensregeln.md. -->
 
@@ -40,5 +40,5 @@ Verhaltensregeln für Claude Code in diesem Repository. Ablage: Repository-Wurze
 
 ## Hinweise für Claude Code
 
-- Nutze keine Auto-Freigabe. Wenn eine Aufgabe ohne Rückfragen nicht lösbar erscheint, sage das statt Umgehungen vorzuschlagen.
+- Nutze keinen Bypass-Modus. Der Auto-Modus ist nur im Container und unter den Bedingungen aus Abschnitt 3.5 des Leitfadens zulässig. Wenn eine Aufgabe ohne Rückfragen nicht lösbar erscheint, sage das statt Umgehungen vorzuschlagen.
 - Sitzungen mit Remote Control (`/rc`) gelten wie lokale Sitzungen: gleiche Regeln, gleiche Bestätigungspflicht.

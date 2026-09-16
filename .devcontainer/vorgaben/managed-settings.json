@@ -198,7 +198,6 @@
       }
     ]
   },
-  "disableAutoMode": "disable",
   "enableAllProjectMcpServers": false,
   "allowedMcpServers": [],
   "remoteControlAtStartup": false

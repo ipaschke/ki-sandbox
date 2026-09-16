@@ -33,7 +33,7 @@ assert "Read(**/.env)" in p["deny"], "deny .env missing"
 assert "Bash(git push --force*)" in p["deny"], "deny force push missing"
 assert "Bash(git push *)" in p["ask"], "ask git push missing"
 assert p["disableBypassPermissionsMode"] == "disable"
-assert d["disableAutoMode"] == "disable"
+assert "disableAutoMode" not in d, "auto mode is allowed in the container (Leitfaden 3.5); host keeps disableAutoMode"
 assert d["allowedMcpServers"] == [], "allowedMcpServers must be empty list: %r" % d.get("allowedMcpServers")
 assert d["enableAllProjectMcpServers"] is False
 assert d["remoteControlAtStartup"] is False
