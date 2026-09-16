@@ -1,0 +1,24 @@
+{
+  "name": "agent-sandbox",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW"
+  ],
+  "remoteUser": "dev",
+  "workspaceFolder": "${localEnv:SANDBOX_PROJECT}",
+  "workspaceMount": "source=${localEnv:SANDBOX_PROJECT},target=${localEnv:SANDBOX_PROJECT},type=bind",
+  "mounts": [
+    "source=sandbox-claude-config,target=/home/dev/.claude,type=volume",
+    "source=sandbox-codex-config,target=/home/dev/.codex,type=volume",
+    "source=sandbox-bash-history,target=/home/dev/.bash_history_dir,type=volume"
+  ],
+  "containerEnv": {
+    "HISTFILE": "/home/dev/.bash_history_dir/history",
+    "CLAUDE_CONFIG_DIR": "/home/dev/.claude",
+    "CODEX_HOME": "/home/dev/.codex"
+  },
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
+}

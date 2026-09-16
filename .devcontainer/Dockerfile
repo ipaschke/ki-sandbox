@@ -1,0 +1,49 @@
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG NODE_MAJOR=22
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg git openssh-client sudo \
+    build-essential python3 python3-pip python3-venv \
+    ripgrep fd-find jq less vim nano zsh tmux \
+    ninja-build cmake clang lld ccache zlib1g-dev libzstd-dev \
+    iptables ipset iproute2 dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js from nodesource
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
+
+# Non-root user. Ubuntu 24.04 ships uid 1000 as "ubuntu"; rename to dev.
+RUN usermod -l dev -d /home/dev -m ubuntu && groupmod -n dev ubuntu && gpasswd -d dev sudo \
+    && echo 'dev ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh ""' > /etc/sudoers.d/dev-firewall \
+    && chmod 0440 /etc/sudoers.d/dev-firewall
+
+# Agent CLIs
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
+
+COPY init-firewall.sh /usr/local/bin/init-firewall.sh
+RUN chmod 755 /usr/local/bin/init-firewall.sh
+
+# git wrapper: push/fetch/pull become approval requests for the host (README,
+# "Git: remote operations run on the host"). /usr/local/bin precedes /usr/bin.
+COPY git-wrapper.sh /usr/local/bin/git
+RUN chmod 755 /usr/local/bin/git
+
+# Claude Code: lock out the modes that skip human approval (bypassPermissions
+# and auto mode). Managed settings override user and project settings and are
+# not writable by the container user.
+RUN mkdir -p /etc/claude-code \
+    && printf '%s\n' '{ "permissions": { "disableBypassPermissionsMode": "disable" }, "disableAutoMode": "disable" }' > /etc/claude-code/managed-settings.json \
+    && chmod 0644 /etc/claude-code/managed-settings.json
+
+USER dev
+WORKDIR /home/dev
+ENV SHELL=/bin/bash \
+    DEVCONTAINER=true \
+    CLAUDE_CONFIG_DIR=/home/dev/.claude \
+    CODEX_HOME=/home/dev/.codex
+RUN mkdir -p /home/dev/.claude /home/dev/.codex /home/dev/.bash_history_dir

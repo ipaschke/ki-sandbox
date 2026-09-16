@@ -1,0 +1,195 @@
+#!/bin/bash
+# Run claude / codex / a shell inside the docker sandbox.
+#   sbx <tool> [project-dir] [tool args...]
+# tool: claude | codex | shell | seed | rebuild | stop | ps
+set -euo pipefail
+
+SANDBOX_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+tool="${1:?usage: sbx <claude|codex|shell|seed|rebuild|stop|ps> [project-dir] [args...]}"
+force_seed=0
+shift
+
+if [ $# -gt 0 ] && [ -d "$1" ]; then
+    project="$(realpath "$1")"; shift
+else
+    project="$(realpath "$PWD")"
+fi
+export SANDBOX_PROJECT="$project"
+
+# Host-side review of git remote operations requested from inside (no docker needed).
+if [ "$tool" = git ]; then
+    exec python3 "$SANDBOX_DIR/sbx-git.py" --project "$project" "$@"
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    if [ -S /var/run/docker.sock ] && ! [ -w /var/run/docker.sock ]; then
+        echo "sbx: no access to docker socket. You are in the docker group but this" >&2
+        echo "     shell predates it: run 'newgrp docker' or log out and back in." >&2
+    else
+        echo "sbx: docker daemon not reachable (is docker.service running?)" >&2
+    fi
+    exit 1
+fi
+
+if [ "$tool" = ps ]; then
+    exec docker ps -a --filter label=sbx.project \
+        --format 'table {{.ID}}\t{{.Status}}\t{{.Label "sbx.project"}}'
+fi
+
+# One container per project directory. Label keys the lookup so different
+# projects never share a container (and its bind mount).
+label="sbx.project=$project"
+
+# Per-project host-side config. It lives OUTSIDE the project so the agent,
+# which has write access to the project, cannot widen its own mounts or
+# egress (a cloned repo could otherwise ship such a file):
+#   ~/.config/sbx/projects/<project path, "/" -> "-">/mounts   extra bind mounts
+#   ~/.config/sbx/projects/<...>/allow                          extra egress domains
+# The directory is bind-mounted read-only at /etc/sbx so the firewall can read
+# "allow" without trusting anything the container user can write.
+cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/sbx/projects/${project//\//-}"
+for legacy in .sandbox-mounts .sandbox-allow; do
+    if [ -e "$project/$legacy" ]; then
+        echo "sbx: ignoring $project/$legacy: files inside the project are writable by the agent." >&2
+        echo "     Move it to $cfg_dir/${legacy#.sandbox-}" >&2
+    fi
+done
+
+# Extra bind mounts: one host path per line in $cfg_dir/mounts (append :ro
+# for read-only), plus whitespace-separated SBX_MOUNTS="/a /b:ro". Mounted at
+# the same absolute path inside the container. A change in the list recreates
+# the container, since mounts are fixed at creation.
+extra_mounts=()
+rw_roots=("$project")
+mount_spec=""
+add_mount() {
+    local entry="$1" ro="" src
+    [[ "$entry" == *:ro ]] && { ro=",readonly"; entry="${entry%:ro}"; }
+    entry="${entry/#\~/$HOME}"
+    [ -z "$entry" ] && return
+    if ! src="$(realpath -e "$entry" 2>/dev/null)"; then
+        echo "sbx: mount path not found: $entry" >&2; exit 1
+    fi
+    extra_mounts+=("source=$src,target=$src,type=bind$ro")
+    [ -z "$ro" ] && rw_roots+=("$src")
+    mount_spec+="$src$ro;"
+}
+if [ -f "$cfg_dir/mounts" ]; then
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+        add_mount "$line"
+    done < "$cfg_dir/mounts"
+fi
+if [ -n "${SBX_MOUNTS:-}" ]; then
+    for m in $SBX_MOUNTS; do add_mount "$m"; done
+fi
+# Git approval queue (see README, "Git: remote operations run on the host").
+# The container writes requests into $req_dir (read-write); the host validates
+# and runs them with sbx-git. The project path the validation relies on is
+# stored one level up, outside the mount, so the agent cannot rewrite it.
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/sbx"
+state_dir="$state_root/projects/${project//\//-}"
+req_dir="$state_dir/requests"
+# Neither the config dir nor the state dir may be writable from inside the
+# container, or the agent could edit its own allowlist or project path.
+for root in "${rw_roots[@]}"; do
+    for d in "$cfg_dir" "$state_dir"; do
+        case "$d/" in "$root"/*)
+            echo "sbx: refusing: $d lies inside the writable mount $root" >&2
+            echo "     Mount that directory read-only (:ro) or set XDG_CONFIG_HOME / XDG_STATE_HOME elsewhere." >&2
+            exit 1 ;;
+        esac
+    done
+done
+# Egress additions: mount the config dir read-only; init-firewall.sh reads
+# /etc/sbx/allow and refuses it unless the mount really is read-only.
+if [ -f "$cfg_dir/allow" ]; then
+    extra_mounts+=("source=$cfg_dir,target=/etc/sbx,type=bind,readonly")
+    mount_spec+="/etc/sbx;"
+fi
+mkdir -p "$req_dir/done" "$req_dir/rejected"
+printf '%s\n' "$project" > "$state_dir/project"
+extra_mounts+=("source=$req_dir,target=/run/sbx/requests,type=bind")
+mount_spec+="/run/sbx/requests;"
+# Config layout version; bump to force recreation of existing containers.
+mounts_hash="$(printf 'v4;%s' "$mount_spec" | sha256sum | cut -c1-16)"
+mounts_label="sbx.mounts=$mounts_hash"
+
+# The devcontainer CLI's --mount flag cannot express readonly, but the
+# "mounts" field in devcontainer.json can. Generate a config with the extra
+# mounts appended, next to the base one so "build.dockerfile" still resolves.
+config="$SANDBOX_DIR/.devcontainer/devcontainer.json"
+if [ ${#extra_mounts[@]} -gt 0 ]; then
+    mkdir -p "$SANDBOX_DIR/.devcontainer/gen/$mounts_hash"
+    config="$SANDBOX_DIR/.devcontainer/gen/$mounts_hash/devcontainer.json"
+    python3 - "$SANDBOX_DIR/.devcontainer/devcontainer.json" "$config" "${extra_mounts[@]}" <<'PY'
+import json, sys
+base, out, *extra = sys.argv[1:]
+d = json.load(open(base))
+d["build"] = {"dockerfile": "../../Dockerfile", "context": "../.."}
+d.setdefault("mounts", []).extend(extra)
+json.dump(d, open(out, "w"), indent=2)
+PY
+fi
+
+dc=(devcontainer --workspace-folder "$SANDBOX_DIR" --config "$config" \
+    --id-label "$label" --id-label "$mounts_label")
+
+case "$tool" in
+    rebuild)
+        "${dc[@]}" up --remove-existing-container --build-no-cache
+        exit 0
+        ;;
+    stop)
+        id=$(docker ps -aq --filter "label=$label")
+        [ -n "$id" ] && docker rm -f "$id" >/dev/null && echo "stopped $id"
+        exit 0
+        ;;
+    shell) cmd=(bash -l "$@") ;;
+    seed) force_seed=1; cmd=(true) ;;
+    claude|codex) cmd=("$tool" "$@") ;;
+    *) echo "unknown tool: $tool" >&2; exit 2 ;;
+esac
+
+# Existing container for this project with a different mount set: replace it.
+for c in $(docker ps -aq --filter "label=$label"); do
+    have=$(docker inspect -f '{{index .Config.Labels "sbx.mounts"}}' "$c")
+    if [ "$have" != "$mounts_hash" ]; then
+        echo "sbx: config changed, recreating container" >&2
+        docker rm -f "$c" >/dev/null
+    fi
+done
+
+# devcontainer up logs the docker build to stderr every time; keep it quiet
+# unless it fails.
+log="$(mktemp)"
+if ! "${dc[@]}" up >"$log" 2>&1; then
+    cat "$log" >&2; rm -f "$log"
+    echo "sbx: devcontainer up failed" >&2; exit 1
+fi
+rm -f "$log"
+# devcontainer exec cannot pass dash-prefixed args (yargs eats them), so exec
+# via docker directly. Container env (CLAUDE_CONFIG_DIR etc.) is baked in.
+id=$(docker ps -q --filter "label=$label" --filter "label=$mounts_label" | head -n1)
+[ -n "$id" ] || { echo "sbx: container not found for $project" >&2; exit 1; }
+# Approval web UI on the host, loopback only; start it unless something listens.
+# SBX_WEB=0 disables the autostart (sbx-git --serve runs it by hand).
+if [ "${SBX_WEB:-1}" = 1 ] && ! (exec 3<>/dev/tcp/127.0.0.1/7331) 2>/dev/null; then
+    nohup python3 "$SANDBOX_DIR/sbx-git.py" --serve >>"$state_root/web.log" 2>&1 &
+    disown
+fi
+n_pending=$(find "$req_dir" -maxdepth 1 -name '*.req' | wc -l)
+if [ "$n_pending" -gt 0 ]; then
+    echo "sbx: $n_pending git request(s) pending for this project: sbx-git or http://127.0.0.1:7331/" >&2
+fi
+# First use of a fresh config volume: copy auth + portable config from host.
+if [ "$force_seed" = 1 ] || ! docker exec -u dev "$id" test -f /home/dev/.claude/.credentials.json; then
+    "$SANDBOX_DIR/seed-config.sh" "$id"
+    [ "$tool" = seed ] && exit 0
+fi
+tty_flag=""; [ -t 0 ] && tty_flag="-t"
+# exec so the terminal's foreground process is "docker": Ptyxis keys its
+# window colouring (.container class) off that name.
+exec docker exec -i $tty_flag -u dev -w "$project" \
+    -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" \
+    "$id" "${cmd[@]}"
