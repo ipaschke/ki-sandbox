@@ -58,13 +58,25 @@ and relative paths match the host. Nothing else from the host is visible.
 Home inside the container is `/home/dev`, not `/home/ipaschke`, so `~` differs.
 One container per project directory; containers persist until `sbx-stop`.
 
-Auth and settings live in docker volumes `sandbox-claude-config` and
-`sandbox-codex-config`, shared across projects. On first use they are
-seeded from the host by `seed-config.sh`: claude credentials, CLAUDE.md,
-agents/commands/skills, keybindings, settings.json (minus hooks, plugins,
-statusLine, which point at host-only tools), onboarding flags, and codex
-auth.json. Later host changes are not synced; run `sbx-seed` to re-copy.
-Host `~/.claude` / `~/.codex` are never bind-mounted.
+Auth and settings live in docker volumes `sandbox-claude-config-<h>` and
+`sandbox-codex-config-<h>`, one set per project (`<h>` is a hash of the
+project path; `sbx-ps` shows the container, `docker volume ls` the set).
+A repository that turns the agent against its user therefore cannot read
+the session history, settings or login of another project. On first use
+of a project the volumes are seeded from the host by `seed-config.sh`:
+claude credentials, CLAUDE.md, agents/commands/skills, keybindings,
+settings.json (minus hooks, plugins, statusLine, which point at host-only
+tools), onboarding flags, and codex auth.json. Later host changes are not
+synced; run `sbx-seed` in the project to re-copy. Host `~/.claude` /
+`~/.codex` are never bind-mounted.
+
+Each project holds its own copy of the claude.ai login. If the OAuth
+refresh in one container invalidates the token elsewhere (host or other
+projects), `sbx-seed` re-copies the host's current credentials. Inside the
+container the credentials are readable by Claude Code's own process only:
+the managed settings deny `Read` of `~/.claude/.credentials.json` and
+`~/.claude/.claude.json` and list both under the Bash sandbox's
+`denyRead` (sandbox additions made by `sync-vorgaben.sh`).
 
 Container user `dev` is uid 1000 (same as host user), no sudo except the
 firewall script (without arguments). Files written to mounted directories
@@ -91,9 +103,9 @@ What the container sees:
 | `<project-dir>` (same host path) | bind mount of the project       | rw   |
 | extra dirs (same host path)      | `~/.config/sbx/projects/<p>/mounts`, `SBX_MOUNTS` | rw or ro |
 | `/etc/sbx`                       | `~/.config/sbx/projects/<p>/` (only if `allow` exists) | ro |
-| `/home/dev/.claude`              | volume `sandbox-claude-config`  | rw   |
-| `/home/dev/.codex`               | volume `sandbox-codex-config`   | rw   |
-| `/home/dev/.bash_history_dir`    | volume `sandbox-bash-history`   | rw   |
+| `/home/dev/.claude`              | volume `sandbox-claude-config-<h>`, per project | rw   |
+| `/home/dev/.codex`               | volume `sandbox-codex-config-<h>`, per project  | rw   |
+| `/home/dev/.bash_history_dir`    | volume `sandbox-bash-history-<h>`, per project  | rw   |
 
 Everything else is the image: no host `$HOME`, no `/tmp`, no other repos.
 
@@ -151,7 +163,7 @@ Whitespace-separated `SBX_MOUNTS` adds to (does not replace) the file:
 `init-firewall.sh` runs as root at every container start
 (`postStartCommand`) and installs iptables rules:
 
-- `OUTPUT` default `DROP`; only DNS, loopback, the docker bridge subnet,
+- `OUTPUT` default `DROP`; only DNS to the resolvers from `/etc/resolv.conf`, loopback, the docker bridge subnet,
   established connections, and destinations in the `allowed-domains`
   ipset get through. Everything else is rejected with
   `icmp-admin-prohibited`, so blocked connections fail fast instead of
@@ -239,9 +251,12 @@ policy under `/etc/claude-code/`, where the container user cannot change it:
 writes the transformed copies to `.devcontainer/vorgaben/`; commit them, then
 `sbx-rebuild`. The transformation drops entries with placeholders (project
 test/lint commands, internal hosts, the MCP server name; `allowedMcpServers`
-becomes `[]`, blocking every server), points the hook at its absolute path
-and removes the `Projektspezifisches` section from CLAUDE.md, which belongs
-into each project's own CLAUDE.md.
+becomes `[]`, blocking every server), points the hook at its absolute path,
+adds the sandbox's own entries for the seeded claude.ai login
+(`Read(~/.claude/.credentials.json)` and `Read(~/.claude/.claude.json)` to
+`permissions.deny`, both paths to `sandbox.filesystem.denyRead`) and removes
+the `Projektspezifisches` section from CLAUDE.md, which belongs into each
+project's own CLAUDE.md.
 
 ### Claude's own sandbox inside the container
 
@@ -302,7 +317,7 @@ model, api.anthropic.com is unreachable from the container.
 | Firewall self-check | example.com closed, api.github.com open | additionally api.anthropic.com closed, model server probed (warning if down) |
 | Claude Code | claude.ai login seeded from host | `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` to the server, all model aliases pinned to `SBX_LOCAL_MODEL`, telemetry, error reports, updater and claude.ai MCP connectors off, auto mode disabled (its classifier needs an Anthropic model) |
 | Codex | host `auth.json` seeded | generated `~/.codex/config.toml`: provider `local` (`base_url` `<BASE>/v1`, `env_key SBX_LOCAL_API_KEY`, `wire_api responses`), plus the leitfaden limits; no OpenAI auth |
-| Volumes | `sandbox-claude-config`, `sandbox-codex-config`, `sandbox-bash-history` | same names with `-local`; no cloud credentials are ever copied in |
+| Volumes | `sandbox-claude-config-<h>`, `sandbox-codex-config-<h>`, `sandbox-bash-history-<h>` | same names with `-local-<h>`; no cloud credentials are ever copied in |
 | Everything else | git approval, mounts, managed settings, seccomp | identical |
 
 `/etc/sbx` (read-only, generated by `sbx` at every start under

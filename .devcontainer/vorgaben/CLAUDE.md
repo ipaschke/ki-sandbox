@@ -1,5 +1,5 @@
 <!-- Verwaltete Verhaltensregeln der Agent-Sandbox. Quelle: ki-leitfaden@96b32fa,
-     konfiguration/claude-code/CLAUDE.md.vorlage, übernommen am 2026-09-16 durch sync-vorgaben.sh.
+     konfiguration/claude-code/CLAUDE.md.vorlage, übernommen am 2026-09-17 durch sync-vorgaben.sh.
      Nicht von Hand bearbeiten; Änderungen in konfiguration/gemeinsam/verhaltensregeln.md. -->
 
 # CLAUDE.md

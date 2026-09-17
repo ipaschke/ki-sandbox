@@ -10,6 +10,11 @@
 #   - entries containing placeholders (<<...>>) are dropped and listed
 #   - allowedMcpServers becomes an empty list (blocks every server)
 #   - the hook path becomes /etc/claude-code/hooks/pre-tool-secrets.sh
+#   - sandbox additions: the Claude credentials seeded into the container
+#     (~/.claude/.credentials.json, ~/.claude/.claude.json with the account
+#     record) are added to permissions.deny (Read) and to
+#     sandbox.filesystem.denyRead, so neither the Read tool nor a Bash command
+#     can read the token the agent's own session authenticates with
 #   - the sandbox block is kept as is; the container's seccomp profile
 #     (.devcontainer/seccomp.json) lets bubblewrap run with a fresh /proc, so
 #     enableWeakerNestedSandbox is not needed and not set
@@ -68,6 +73,14 @@ for entries in d.get("hooks", {}).values():
             if "pre-tool-secrets.sh" in h.get("command", ""):
                 h["command"] = "/etc/claude-code/hooks/pre-tool-secrets.sh"
 d.pop("$schema", None)
+# Sandbox additions: credentials of the seeded claude.ai login. Claude Code
+# itself reads them outside the Bash sandbox; the agent's tools must not.
+SBX_DENY_READ = ["Read(~/.claude/.credentials.json)", "Read(~/.claude/.claude.json)"]
+SBX_DENY_READ_FS = ["~/.claude/.credentials.json", "~/.claude/.claude.json"]
+deny = perm.setdefault("deny", [])
+deny.extend(x for x in SBX_DENY_READ if x not in deny)
+fs = sb.setdefault("filesystem", {}).setdefault("denyRead", [])
+fs.extend(x for x in SBX_DENY_READ_FS if x not in fs)
 left = PH.findall(json.dumps(d, ensure_ascii=False))
 if left:
     sys.exit(f"sync-vorgaben: placeholders left in settings: {sorted(set(left))}")

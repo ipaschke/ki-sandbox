@@ -56,7 +56,9 @@
       "Bash(dd *)",
       "Bash(mkfs*)",
       "Bash(shutdown *)",
-      "Bash(reboot*)"
+      "Bash(reboot*)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.claude/.claude.json)"
     ],
     "ask": [
       "Bash(git push *)",
@@ -110,7 +112,9 @@
         "~/.gnupg",
         "~/.docker",
         "~/.codex",
-        "~/.copilot"
+        "~/.copilot",
+        "~/.claude/.credentials.json",
+        "~/.claude/.claude.json"
       ]
     },
     "credentials": {

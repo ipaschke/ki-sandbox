@@ -41,6 +41,14 @@ id_labels() { grep -A1 -- '^--id-label$' "$SBX_TEST_LOG" | grep -v -- '--id-labe
 c="$(gen_config)"; grep -q 'target=/etc/sbx,type=bind,readonly' "$c" && ok "/etc/sbx mounted read-only" || fail "etc-sbx mount missing in $c"
 grep -q 'ANTHROPIC_BASE_URL' "$c" && fail "cloud profile must not set ANTHROPIC_BASE_URL" || ok "cloud profile leaves Claude env alone"
 grep -q 'sandbox-claude-config-local' "$c" && fail "cloud profile must use the normal volumes" || ok "cloud profile uses normal volumes"
+grep -qE 'source=sandbox-claude-config-[0-9a-f]{16},target=/home/dev/.claude' "$c" && ok "claude volume is per project" || fail "claude volume name: $(grep -o 'source=sandbox-claude[^,]*' "$c")"
+grep -qE 'source=sandbox-codex-config-[0-9a-f]{16},' "$c" && grep -qE 'source=sandbox-bash-history-[0-9a-f]{16},' "$c" && ok "codex and history volumes are per project" || fail "codex/history volume names"
+vol1="$(grep -oE 'source=sandbox-claude-config-[0-9a-f]{16}' "$c")"
+"$SBX" shell "$T/proj2" >/dev/null 2>&1; c2="$(gen_config)"
+vol2="$(grep -oE 'source=sandbox-claude-config-[0-9a-f]{16}' "$c2")"
+[ -n "$vol1" ] && [ -n "$vol2" ] && [ "$vol1" != "$vol2" ] && ok "different projects get different volumes" || fail "volumes: $vol1 vs $vol2"
+"$SBX" shell "$T/proj" >/dev/null 2>&1; c="$(gen_config)"
+[ "$(grep -oE 'source=sandbox-claude-config-[0-9a-f]{16}' "$c")" = "$vol1" ] && ok "volume name is stable per project" || fail "volume name changed for the same project"
 labels_cloud="$(id_labels)"
 
 # 2. --local without endpoint file -> refused, names the file
@@ -75,11 +83,12 @@ assert e["DISABLE_AUTOUPDATER"] == "1" and e["DISABLE_TELEMETRY"] == "1" and e["
 assert e["ENABLE_CLAUDEAI_MCP_SERVERS"] == "false"
 assert e["SBX_LOCAL_API_KEY"] == "s3cret-local" and e["SBX_PROFILE"] == "local"
 assert e["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "196608"
-m = "\n".join(d["mounts"])
-assert "source=sandbox-claude-config-local,target=/home/dev/.claude" in m, m
-assert "source=sandbox-codex-config-local,target=/home/dev/.codex" in m, m
-assert "source=sandbox-bash-history-local," in m, m
-assert "source=sandbox-claude-config," not in m
+m = d["mounts"]
+import re
+assert any(re.match(r"source=sandbox-claude-config-local-[0-9a-f]{16},target=/home/dev/.claude", x) for x in m), m
+assert any(re.match(r"source=sandbox-codex-config-local-[0-9a-f]{16},target=/home/dev/.codex", x) for x in m), m
+assert any(re.match(r"source=sandbox-bash-history-local-[0-9a-f]{16},", x) for x in m), m
+assert not any(x.startswith("source=sandbox-claude-config,") or re.match(r"source=sandbox-claude-config-[0-9a-f]{16},", x) for x in m), m
 PY
 python3 - "$state/etc-sbx/codex/config.toml" <<'PY' && ok "codex config.toml for local provider" || fail "codex config"
 import sys

@@ -31,6 +31,11 @@ assert "<<" not in s, "placeholder left: " + s
 p = d["permissions"]
 assert "Read(**/.env)" in p["deny"], "deny .env missing"
 assert "Bash(git push --force*)" in p["deny"], "deny force push missing"
+assert "Read(~/.claude/.credentials.json)" in p["deny"], "sandbox addition: deny Read of claude credentials missing"
+assert "Read(~/.claude/.claude.json)" in p["deny"], "sandbox addition: deny Read of .claude.json missing"
+fs = d["sandbox"]["filesystem"]["denyRead"]
+assert "~/.claude/.credentials.json" in fs and "~/.claude/.claude.json" in fs, f"sandbox addition: denyRead missing: {fs}"
+assert len(fs) == len(set(fs)), "denyRead has duplicates"
 assert "Bash(git push *)" in p["ask"], "ask git push missing"
 assert p["disableBypassPermissionsMode"] == "disable"
 assert "disableAutoMode" not in d, "auto mode is allowed in the container (Leitfaden 3.5); host keeps disableAutoMode"

@@ -232,9 +232,17 @@ mkdir -p "$req_dir/done" "$req_dir/rejected"
 printf '%s\n' "$project" > "$state_dir/project"
 extra_mounts+=("source=$req_dir,target=/run/sbx/requests,type=bind")
 mount_spec+="/run/sbx/requests;"
+# Config volumes (~/.claude, ~/.codex, bash history) are per project: a
+# repository that turns the agent against its user must not read the session
+# history or settings of other projects, and the seeded login is confined to
+# the container of the project it was seeded for. Profile local gets its own
+# set, into which no cloud credentials are ever copied.
+volume_suffix="$(printf '%s' "$project" | hash16)"
+[ "$profile" = local ] && volume_suffix="local-$volume_suffix"
+export SBX_GEN_VOLUME_SUFFIX="$volume_suffix"
 # Config layout version; bump to force recreation of existing containers.
 # Profile and endpoint are part of the hash: a change recreates the container.
-mounts_hash="$(printf 'v5;%s;%s;%s' "$mount_spec" "$profile" "$local_spec" | hash16)"
+mounts_hash="$(printf 'v6;%s;%s;%s' "$mount_spec" "$profile" "$local_spec" | hash16)"
 mounts_label="sbx.mounts=$mounts_hash"
 
 # The devcontainer CLI's --mount flag cannot express readonly, but the
@@ -250,9 +258,9 @@ base, out, *extra = sys.argv[1:]
 d = json.load(open(base))
 d["build"] = {"dockerfile": "../../Dockerfile", "context": "../.."}
 d.setdefault("mounts", []).extend(extra)
+suffix = os.environ["SBX_GEN_VOLUME_SUFFIX"]
+d["mounts"] = [re.sub(r"^source=(sandbox-[a-z-]+),", rf"source=\1-{suffix},", m) for m in d["mounts"]]
 if os.environ.get("SBX_GEN_PROFILE") == "local":
-    # Own volumes: no cloud credentials are ever seeded into them.
-    d["mounts"] = [re.sub(r"^source=(sandbox-[a-z-]+),", r"source=\1-local,", m) for m in d["mounts"]]
     model = os.environ["SBX_LOCAL_MODEL"]
     key = os.environ["SBX_LOCAL_API_KEY"]
     d.setdefault("containerEnv", {}).update({

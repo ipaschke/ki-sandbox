@@ -1,7 +1,7 @@
 #!/bin/bash
 # Egress allowlist for the agent sandbox. Runs as root via sudo at container start.
-# Default-deny outbound; allow DNS, localhost, the docker host network, and
-# the domains the agent CLIs need. Two profiles (README, "Profile local"):
+# Default-deny outbound; allow DNS to the configured resolvers only, localhost,
+# the docker host network, and the domains the agent CLIs need. Two profiles (README, "Profile local"):
 #   cloud  (default) cloud AI endpoints + GitHub, npm, PyPI, nodesource, Ubuntu
 #   local  no cloud AI endpoint at all; instead the internal model server
 # Profile, extra domains and model host come from /etc/sbx, a read-only bind
@@ -87,10 +87,20 @@ iptables -t mangle -F
 iptables -t mangle -X
 ipset destroy allowed-domains 2>/dev/null || true
 
-# DNS and localhost first, before default-deny.
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-iptables -A INPUT -p udp --sport 53 -j ACCEPT
+# DNS only to the resolvers the container was started with. An open port 53
+# would be a two-way channel to any host (DNS tunnelling), so the allow rule
+# names the resolver addresses from /etc/resolv.conf; docker's embedded
+# resolver 127.0.0.11 is covered by the loopback rule.
+mapfile -t RESOLVERS < <(awk '/^nameserver[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+([[:space:]]|$)/ {print $2}' /etc/resolv.conf | sort -u)
+if [ "${#RESOLVERS[@]}" -eq 0 ]; then
+    echo "firewall: ERROR no IPv4 nameserver in /etc/resolv.conf" >&2
+    exit 1
+fi
+for ns in "${RESOLVERS[@]}"; do
+    iptables -A OUTPUT -d "$ns" -p udp --dport 53 -j ACCEPT
+    iptables -A OUTPUT -d "$ns" -p tcp --dport 53 -j ACCEPT
+    iptables -A INPUT -s "$ns" -p udp --sport 53 -j ACCEPT
+done
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
 
@@ -147,6 +157,15 @@ if ! curl -fsS --max-time 10 https://api.github.com/zen >/dev/null 2>&1; then
     echo "firewall: ERROR api.github.com unreachable" >&2
     exit 1
 fi
+# DNS to a foreign resolver must fail (unless that address is the configured one).
+for probe in 9.9.9.9 1.1.1.1; do
+    printf '%s\n' "${RESOLVERS[@]}" | grep -qx "$probe" && continue
+    if dig +short +time=2 +tries=1 example.com "@$probe" 2>/dev/null | grep -qE '^[0-9.]+$'; then
+        echo "firewall: ERROR DNS to foreign resolver $probe answered; port 53 is not pinned" >&2
+        exit 1
+    fi
+    break
+done
 if [ "$PROFILE" = local ]; then
     # Cloud AI endpoint must be closed; the model server should answer.
     if curl -sS --max-time 5 -o /dev/null https://api.anthropic.com/ 2>/dev/null; then
