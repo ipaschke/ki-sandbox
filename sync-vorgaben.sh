@@ -15,6 +15,9 @@
 #     record) are added to permissions.deny (Read) and to
 #     sandbox.filesystem.denyRead, so neither the Read tool nor a Bash command
 #     can read the token the agent's own session authenticates with
+#   - sandbox addition: /run/sbx/requests is added to
+#     sandbox.filesystem.allowWrite, so the git wrapper can file its
+#     push/fetch/pull approval requests from inside Claude's Bash sandbox
 #   - the sandbox block is kept as is; the container's seccomp profile
 #     (.devcontainer/seccomp.json) lets bubblewrap run with a fresh /proc, so
 #     enableWeakerNestedSandbox is not needed and not set
@@ -81,6 +84,12 @@ deny = perm.setdefault("deny", [])
 deny.extend(x for x in SBX_DENY_READ if x not in deny)
 fs = sb.setdefault("filesystem", {}).setdefault("denyRead", [])
 fs.extend(x for x in SBX_DENY_READ_FS if x not in fs)
+# Sandbox addition: the git wrapper files push/fetch/pull approval requests
+# into the request mount (README, "Git: remote operations"); Claude's Bash
+# sandbox allows writes only to the project directory and $TMPDIR by default.
+SBX_ALLOW_WRITE_FS = ["/run/sbx/requests"]
+aw = sb["filesystem"].setdefault("allowWrite", [])
+aw.extend(x for x in SBX_ALLOW_WRITE_FS if x not in aw)
 left = PH.findall(json.dumps(d, ensure_ascii=False))
 if left:
     sys.exit(f"sync-vorgaben: placeholders left in settings: {sorted(set(left))}")

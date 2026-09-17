@@ -115,6 +115,9 @@
         "~/.copilot",
         "~/.claude/.credentials.json",
         "~/.claude/.claude.json"
+      ],
+      "allowWrite": [
+        "/run/sbx/requests"
       ]
     },
     "credentials": {

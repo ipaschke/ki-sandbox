@@ -36,6 +36,9 @@ assert "Read(~/.claude/.claude.json)" in p["deny"], "sandbox addition: deny Read
 fs = d["sandbox"]["filesystem"]["denyRead"]
 assert "~/.claude/.credentials.json" in fs and "~/.claude/.claude.json" in fs, f"sandbox addition: denyRead missing: {fs}"
 assert len(fs) == len(set(fs)), "denyRead has duplicates"
+aw = d["sandbox"]["filesystem"]["allowWrite"]
+assert "/run/sbx/requests" in aw, f"sandbox addition: allowWrite for the request mount missing: {aw}"
+assert len(aw) == len(set(aw)), "allowWrite has duplicates"
 assert "Bash(git push *)" in p["ask"], "ask git push missing"
 assert p["disableBypassPermissionsMode"] == "disable"
 assert "disableAutoMode" not in d, "auto mode is allowed in the container (Leitfaden 3.5); host keeps disableAutoMode"

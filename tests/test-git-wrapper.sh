@@ -78,7 +78,18 @@ rc=$(run pull); req4=$(ls -t "$SBX_REQUEST_DIR"/*.req | head -1)
 
 # 3. request dir missing: clear message, non-zero, no crash
 export SBX_REQUEST_DIR="$T/missing"
-rc=$(run push); [ "$rc" != 0 ] && grep -qi "sbx-git" "$T/err" && ok "missing request dir handled" || fail "missing dir: rc=$rc $(cat "$T/err")"
+rc=$(run push); [ "$rc" != 0 ] && grep -qi "sbx-git" "$T/err" && grep -q "does not exist" "$T/err" && ok "missing request dir handled" || fail "missing dir: rc=$rc $(cat "$T/err")"
+
+# 4. request dir present but read-only (Claude's Bash sandbox without the
+# allowWrite entry): names the cause, non-zero, nothing written.
+export SBX_REQUEST_DIR="$T/readonly"; mkdir -p "$SBX_REQUEST_DIR"; chmod a-w "$SBX_REQUEST_DIR"
+if [ -w "$SBX_REQUEST_DIR" ]; then
+    echo "skip: read-only request dir (running as root?)"
+else
+    rc=$(run push); [ "$rc" != 0 ] && grep -q "not writable" "$T/err" && grep -q "allowWrite" "$T/err" && ok "read-only request dir names allowWrite" || fail "read-only dir: rc=$rc $(cat "$T/err")"
+    [ -z "$(ls -A "$SBX_REQUEST_DIR")" ] && ok "nothing written to read-only dir" || fail "read-only dir not empty"
+fi
+chmod u+w "$SBX_REQUEST_DIR"
 
 [ "$FAIL" = 0 ] && echo "test-git-wrapper: ok"
 exit "$FAIL"

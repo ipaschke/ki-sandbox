@@ -54,10 +54,16 @@ rest=("${args[@]:$((sub_index + 1))}")
 
 fail() { printf 'sbx: %s\n' "$@" >&2; exit 1; }
 
-if [ ! -d "$REQ_DIR" ] || [ ! -w "$REQ_DIR" ]; then
+if [ ! -d "$REQ_DIR" ]; then
     fail "git $sub was not run: remote operations need developer approval on the host," \
-         "but the request directory $REQ_DIR is not available (container not started via sbx-*?)." \
+         "but the request directory $REQ_DIR does not exist (container not started via sbx-*?)." \
          "Ask the developer to run 'git $sub' on the host, or 'sbx-git' after restarting the sandbox."
+fi
+if [ ! -w "$REQ_DIR" ]; then
+    fail "git $sub was not run: remote operations need developer approval on the host," \
+         "but the request directory $REQ_DIR is not writable from here. Inside Claude's Bash sandbox" \
+         "this means the managed settings lack $REQ_DIR in sandbox.filesystem.allowWrite" \
+         "(sync-vorgaben.sh adds it; then sbx-rebuild). Ask the developer to run 'git $sub' on the host."
 fi
 for a in "${rest[@]}"; do
     case "$a" in *$'\n'*) fail "git $sub was not run: argument contains a newline." ;; esac

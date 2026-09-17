@@ -252,11 +252,12 @@ writes the transformed copies to `.devcontainer/vorgaben/`; commit them, then
 `sbx-rebuild`. The transformation drops entries with placeholders (project
 test/lint commands, internal hosts, the MCP server name; `allowedMcpServers`
 becomes `[]`, blocking every server), points the hook at its absolute path,
-adds the sandbox's own entries for the seeded claude.ai login
-(`Read(~/.claude/.credentials.json)` and `Read(~/.claude/.claude.json)` to
-`permissions.deny`, both paths to `sandbox.filesystem.denyRead`) and removes
-the `Projektspezifisches` section from CLAUDE.md, which belongs into each
-project's own CLAUDE.md.
+adds the sandbox's own entries (for the seeded claude.ai login
+`Read(~/.claude/.credentials.json)` and `Read(~/.claude/.claude.json)` to
+`permissions.deny` and both paths to `sandbox.filesystem.denyRead`; for the
+git wrapper `/run/sbx/requests` to `sandbox.filesystem.allowWrite`) and
+removes the `Projektspezifisches` section from CLAUDE.md, which belongs into
+each project's own CLAUDE.md.
 
 ### Claude's own sandbox inside the container
 
@@ -358,6 +359,10 @@ lack of credentials.
 2. `/run/sbx/requests` is a read-write bind mount of
    `~/.local/state/sbx/projects/<p>/requests/` on the host. Subfolders
    `done/` and `rejected/` receive the outcome, so the agent can read it.
+   Claude's own Bash sandbox allows writes only to the project directory
+   and `$TMPDIR`, so the managed settings list `/run/sbx/requests` under
+   `sandbox.filesystem.allowWrite`; without that entry the wrapper reports
+   the directory as not writable and no request is filed.
 3. On the host, `sbx-git [project-dir]` lists pending requests with a
    preview (for `push`: commits and `diff --stat` against the remote
    branch, remote URL; for `fetch`/`pull`: the fetch command and the
