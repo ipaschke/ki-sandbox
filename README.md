@@ -345,9 +345,47 @@ lack of credentials.
    `done/` and `rejected/` receive the outcome, so the agent can read it.
 3. On the host, `sbx-git [project-dir]` lists pending requests with a
    preview (for `push`: commits and `diff --stat` against the remote
-   branch, remote URL; for `fetch`/`pull`: the command and `status -sb`)
-   and asks yes / no / skip. Yes runs `git -C <cwd> <op> <args>` on the
-   host and records exit code and output.
+   branch, remote URL; for `fetch`/`pull`: the fetch command and the
+   ahead/behind count of the current branch) and asks yes / no / skip.
+   Yes runs the operation in a shadow repository (see below) and records
+   exit code and output.
+5. `pull` is split. The host runs only the fetch half and leaves
+   `done/<id>.merge` behind. The agent runs the same `git pull` again in
+   the same directory; the wrapper finds the marker and runs the merge
+   or rebase half locally (`git merge FETCH_HEAD` or `git rebase
+   FETCH_HEAD` with the pull's options and `pull.rebase`/`pull.ff`
+   settings). The merge therefore happens inside the container, where
+   the repository's hooks, filters and merge drivers belong.
+
+### Execution on the host
+
+The repository is agent-controlled, and so are its hooks, its config
+(`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`,
+`credential.helper`, `remote.*.receivepack`, `url.*.insteadOf`, ...) and
+its attributes. Running `git push` inside it would execute that code on
+the host with the host's environment. Therefore no git command that can
+execute anything runs there. An approved request runs in a shadow
+repository under `$TMPDIR`, private to the host user:
+
+- a fresh bare repository whose `objects/info/alternates` points at the
+  agent's object store, so nothing is copied;
+- a config written by the host: hooks disabled, the validated URL and
+  push URL of the one remote named in the request, its fetch/push
+  refspecs, branch tracking and `push.default`. Nothing else from the
+  agent's config is taken over, so `insteadOf` rewrites, exec-style
+  settings and other remotes do not exist there;
+- a snapshot of the agent's refs taken at preview time, so a push sends
+  exactly the commits shown.
+
+For `fetch` and the fetch half of `pull` the new pack files are copied
+into the agent's object store, the ref changes are applied with
+`git update-ref --stdin` (hooks disabled, with old-value checks), and
+`FETCH_HEAD` is copied over. The only git commands that touch the
+agent's repository are read-only plumbing (`rev-parse`, `for-each-ref`,
+`config --file`) and that `update-ref`, all with `core.hooksPath` and
+`core.fsmonitor` disabled. Repositories with their own
+`objects/info/alternates` are rejected, as are `--all`, `--multiple`
+and `--recurse-submodules`.
 4. Alternatively the same review runs in a browser: `sbx-*` shims start
    a small web server on `http://127.0.0.1:7331` if none is running
    (`sbx-git --serve` runs it in the foreground). The container prints
@@ -364,12 +402,26 @@ A request is data written by the agent. Before anything runs:
 - the working directory must lie inside the project (or one of its
   configured extra mounts) and be a git work tree;
 - the remote must be a remote *name* configured in that repo, never a
-  URL or path; the remote URL is shown in the preview, and hosts other
-  than github.com are flagged;
+  URL or path; when no remote is given, the branch's configured remote
+  (or `origin`) is used;
+- every URL and push URL of that remote must point at an allowed host:
+  `https://` or `ssh://` (also `git@host:path`) to a host listed in
+  `~/.config/sbx/remote-hosts`, one host per line, subdomains included;
+  the default without that file is `github.com`. Lines starting with `/`
+  allow local path remotes below that prefix (used by the tests). Other
+  transports (`http://`, `git://`, `ext::`, relative paths) are rejected;
 - `push` refuses `--force`, `-f`, `--force-with-lease`, `--delete`,
   `-d`, `--mirror`, `--prune`, `+refspec` and `:branch` deletion specs.
 
 Anything that fails validation is moved to `rejected/` with the reason.
+
+The web UI additionally binds the approval to what was previewed: the
+page carries a fingerprint of operation, arguments, working directory,
+remote URLs, `HEAD` and all branch and tag refs. If the agent changes any
+of these between the preview and the click (a new commit, `git remote
+set-url`), the POST is answered with 409 and nothing runs; the request
+stays pending for a fresh review. The terminal path previews and runs
+from one snapshot, so the same guarantee holds there.
 
 ### Web server safety
 
@@ -382,8 +434,9 @@ helper); the terminal path can still prompt.
 
 ### Files
 
-    .devcontainer/git-wrapper.sh   installed as /usr/local/bin/git in the image
-    sbx-git.py                     host side: validation, preview, terminal UI, web UI
+    .devcontainer/git-wrapper.sh   installed as /usr/local/bin/git in the image; also the merge half of pull
+    sbx-git.py                     host side: validation, shadow repository, preview, terminal UI, web UI
+    ~/.config/sbx/remote-hosts     allowed remote hosts, one per line (default: github.com)
     tests/                         run ./tests/run.sh (no docker needed)
 
 ## Terminal colour

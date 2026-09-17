@@ -54,6 +54,28 @@ rc=$(run pull); req3=$(ls -t "$SBX_REQUEST_DIR"/*.req | head -1)
 [ "$rc" != 0 ] && grep -q '^op: pull$' "$req3" && ok "pull intercepted" || fail "pull"
 [ "$(ls "$SBX_REQUEST_DIR"/*.req | wc -l)" = 3 ] && ok "three requests, unique ids" || fail "request count $(ls "$SBX_REQUEST_DIR")"
 
+grep -q "fetch half" "$T/err" && ok "pull message explains the split" || fail "pull message: $(cat "$T/err")"
+
+# 2b. pull completion: a done/<id>.merge marker for this directory turns the next
+# pull into the local merge or rebase half; nothing is filed.
+mkdir -p "$SBX_REQUEST_DIR/done"
+printf 'cwd: %s\nrequest: x\n' "$PWD" > "$SBX_REQUEST_DIR/done/20260101T000000Z-aaaa0001.merge"
+printf 'cwd: /elsewhere\nrequest: y\n' > "$SBX_REQUEST_DIR/done/20260101T000000Z-aaaa0002.merge"
+n_before=$(ls "$SBX_REQUEST_DIR"/*.req | wc -l)
+rc=$(run pull --no-rebase --ff-only origin main)
+[ "$rc" = 0 ] && [ "$(head -1 "$STUB_LOG")" = merge ] && grep -qx -- --ff-only "$STUB_LOG" && grep -qx FETCH_HEAD "$STUB_LOG" \
+    && ok "pull with marker runs merge --ff-only FETCH_HEAD" || fail "pull completion: rc=$rc log=$(tr '\n' ' ' < "$STUB_LOG") err=$(cat "$T/err")"
+grep -qx origin "$STUB_LOG" || grep -qx main "$STUB_LOG" && fail "remote or refspec leaked into merge" || ok "remote and refspec dropped from the merge half"
+[ ! -f "$SBX_REQUEST_DIR/done/20260101T000000Z-aaaa0001.merge" ] && [ -f "$SBX_REQUEST_DIR/done/20260101T000000Z-aaaa0001.merged" ] && ok "marker consumed" || fail "marker: $(ls "$SBX_REQUEST_DIR/done")"
+[ -f "$SBX_REQUEST_DIR/done/20260101T000000Z-aaaa0002.merge" ] && ok "marker of another directory untouched" || fail "foreign marker consumed"
+[ "$(ls "$SBX_REQUEST_DIR"/*.req | wc -l)" -eq "$n_before" ] && ok "no request filed by the completing pull" || fail "request filed on completion"
+printf 'cwd: %s\nrequest: z\n' "$PWD" > "$SBX_REQUEST_DIR/done/20260101T000000Z-aaaa0003.merge"
+rc=$(run pull --rebase -s recursive -X theirs --tags origin)
+[ "$rc" = 0 ] && [ "$(head -1 "$STUB_LOG")" = rebase ] && grep -qx recursive "$STUB_LOG" && grep -qx theirs "$STUB_LOG" && ! grep -qx -- --tags "$STUB_LOG" \
+    && ok "pull --rebase with strategy options runs rebase, drops fetch options" || fail "rebase completion: $(tr '\n' ' ' < "$STUB_LOG")"
+rc=$(run pull); req4=$(ls -t "$SBX_REQUEST_DIR"/*.req | head -1)
+[ "$rc" != 0 ] && grep -q '^op: pull$' "$req4" && ok "pull without marker files a request again" || fail "pull after completion"
+
 # 3. request dir missing: clear message, non-zero, no crash
 export SBX_REQUEST_DIR="$T/missing"
 rc=$(run push); [ "$rc" != 0 ] && grep -qi "sbx-git" "$T/err" && ok "missing request dir handled" || fail "missing dir: rc=$rc $(cat "$T/err")"
